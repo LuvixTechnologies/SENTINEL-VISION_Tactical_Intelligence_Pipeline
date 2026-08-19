@@ -1,0 +1,23 @@
+# On dit à pip d'aller chercher sur le dépôt PyTorch CPU si nécessaire
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# Les librairies de base
+fastapi==0.141.1
+opencv-python==5.0.0.93
+numpy==2.4.1
+pillow==12.2.0
+pydantic==2.13.4
+SQLAlchemy==2.0.52
+uvicorn
+psycopg2
+python-multipart
+
+# Installation de Torch en version CPU
+# Note : On ne met pas d'URL, pip va trouver la version CPU grâce au lien en haut
+torch
+
+# Ultralytics va dépendre de torch, mais comme on a mis l'index CPU, 
+# il ne téléchargera pas la version CUDA massive.
+ultralytics==8.4.117
+
+boto3

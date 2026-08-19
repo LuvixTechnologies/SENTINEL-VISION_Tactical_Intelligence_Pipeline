@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SENTINEL-VISION — Tactical Intelligence Pipeline</title>
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #0a0a12;
+    --panel:     #1a1a2e;
+    --panel2:    #16213e;
+    --border:    #3a3a5c;
+    --border-hi: #6a6a9a;
+    --border-lo: #0a0a1a;
+    --text:      #c0c0d0;
+    --text-dim:  #707090;
+    --text-faint:#404060;
+    --amber:     #ffb000;
+    --amber-dim: #8c6000;
+    --cyan:      #00e0c0;
+    --cyan-dim:  #008070;
+    --red:       #e04040;
+    --green:     #40c040;
+    --pixel:     2px;
+  }
+
+  * { box-sizing: border-box; image-rendering: pixelated; }
+
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'VT323', monospace;
+    font-size: 18px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* CRT scanlines + slight vignette */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    pointer-events: none; z-index: 100;
+    background:
+      repeating-linear-gradient(
+        0deg,
+        rgba(0,0,0,0.15) 0px,
+        rgba(0,0,0,0.15) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+    opacity: 0.55;
+  }
+  body::after {
+    content: '';
+    position: fixed; inset: 0;
+    pointer-events: none; z-index: 99;
+    background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.45) 100%);
+  }
+
+  ::selection { background: var(--amber); color: #000; }
+
+  /* ---------- Classic 3D bevel helpers ---------- */
+  .bevel {
+    border-top:    3px solid var(--border-hi);
+    border-left:   3px solid var(--border-hi);
+    border-bottom: 3px solid var(--border-lo);
+    border-right:  3px solid var(--border-lo);
+  }
+  .bevel-in {
+    border-top:    3px solid var(--border-lo);
+    border-left:   3px solid var(--border-lo);
+    border-bottom: 3px solid var(--border-hi);
+    border-right:  3px solid var(--border-hi);
+  }
+
+  /* ---------- Title bar (X11 style) ---------- */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0;
+    background: linear-gradient(90deg, #2a2a4a, #1a1a3a);
+    border-bottom: 3px solid var(--border-lo);
+    flex-wrap: wrap;
+  }
+
+  .titlebar {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    width: 100%;
+    background: repeating-linear-gradient(
+      90deg,
+      #3a3a6a 0px, #3a3a6a 4px,
+      #2a2a5a 4px, #2a2a5a 8px
+    );
+    border-bottom: 2px solid var(--border-lo);
+  }
+
+  .brand {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 14px;
+  }
+  .brand h1 {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 14px;
+    margin: 0;
+    color: var(--amber);
+    letter-spacing: 1px;
+    text-shadow: 2px 2px 0 #000;
+  }
+  .brand h1 span { color: var(--cyan); }
+  .brand .sub {
+    font-size: 14px;
+    color: var(--text-dim);
+    letter-spacing: 2px;
+  }
+
+  .status-line {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 6px 16px;
+    font-size: 16px;
+    color: var(--text-dim);
+    background: var(--panel2);
+    border-left: 3px solid var(--border-lo);
+  }
+  .status-item { display: flex; align-items: center; gap: 8px; }
+  .dot {
+    width: 10px; height: 10px;
+    background: var(--text-faint);
+    box-shadow: 1px 1px 0 #000;
+  }
+  .dot.online  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot.offline { background: var(--red);   box-shadow: 0 0 6px var(--red); }
+
+  .status-item b { color: var(--amber); font-weight: normal; }
+
+  .api-config {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 15px; color: var(--text-faint);
+  }
+  .api-config input {
+    background: #0a0a18;
+    border: 2px solid var(--border);
+    border-top-color: var(--border-lo);
+    border-left-color: var(--border-lo);
+    color: var(--cyan);
+    font-family: 'VT323', monospace;
+    font-size: 16px;
+    padding: 3px 8px;
+    width: 180px;
+  }
+  .api-config input:focus {
+    outline: none;
+    border-color: var(--amber);
+    color: var(--amber);
+  }
+
+  /* ---------- Layout ---------- */
+  main {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 0;
+    min-height: calc(100vh - 52px);
+    background: var(--bg);
+  }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; }
+  }
+
+  .panel {
+    background: var(--panel);
+    padding: 16px;
+    border-right: 3px solid var(--border-lo);
+  }
+  .panel.viewer {
+    border-right: none;
+    background: var(--bg);
+  }
+
+  .panel-title {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: var(--amber);
+    margin: 0 0 12px 0;
+    padding: 4px 0;
+    border-bottom: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .panel-title::before {
+    content: '▶';
+    color: var(--cyan);
+    font-size: 10px;
+  }
+
+  /* ---------- Dropzone ---------- */
+  .dropzone {
+    border: 3px dashed var(--border);
+    background: #0e0e1c;
+    padding: 28px 12px;
+    text-align: center;
+    cursor: pointer;
+    font-size: 16px;
+    color: var(--text-dim);
+    transition: none;
+  }
+  .dropzone:hover, .dropzone.drag {
+    border-color: var(--amber);
+    background: #1a1400;
+    color: var(--amber);
+  }
+  .dropzone .icon {
+    font-size: 28px;
+    margin-bottom: 6px;
+    color: var(--text-faint);
+    image-rendering: pixelated;
+  }
+  .dropzone.drag .icon { color: var(--amber); }
+  input[type=file] { display: none; }
+
+  /* ---------- Pixel button ---------- */
+  .btn {
+    width: 100%;
+    margin-top: 12px;
+    padding: 10px 12px;
+    background: var(--amber);
+    color: #000;
+    border-top: 3px solid #ffe080;
+    border-left: 3px solid #ffe080;
+    border-bottom: 3px solid #8c6000;
+    border-right: 3px solid #8c6000;
+    font-family: 'Press Start 2P', monospace;
+    font-size: 11px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    text-transform: uppercase;
+  }
+  .btn:hover { background: #ffc830; }
+  .btn:active {
+    border-top: 3px solid #8c6000;
+    border-left: 3px solid #8c6000;
+    border-bottom: 3px solid #ffe080;
+    border-right: 3px solid #ffe080;
+    transform: translate(1px,1px);
+  }
+  .btn:disabled {
+    background: #3a3a4a;
+    color: #606070;
+    border-color: #505060;
+    cursor: not-allowed;
+  }
+
+  /* ---------- History ---------- */
+  .history-log {
+    margin-top: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 380px;
+    overflow-y: auto;
+  }
+  .log-entry {
+    padding: 8px 10px;
+    background: #12122a;
+    border-left: 4px solid var(--border);
+    font-size: 15px;
+  }
+  .log-entry:hover { border-left-color: var(--amber); }
+  .log-entry .row1 {
+    display: flex;
+    justify-content: space-between;
+    color: var(--text);
+    margin-bottom: 2px;
+  }
+  .log-entry .row2 { color: var(--text-faint); font-size: 14px; }
+  .log-entry .count { color: var(--amber); }
+  .log-empty {
+    color: var(--text-faint);
+    font-size: 15px;
+    padding: 8px 0;
+  }
+
+  /* ---------- Viewer ---------- */
+  .viewer { display: flex; flex-direction: column; gap: 14px; padding: 16px; }
+
+  .canvas-wrap {
+    position: relative;
+    background: #0a0a18;
+    border: 3px solid var(--border);
+    border-top-color: var(--border-lo);
+    border-left-color: var(--border-lo);
+    border-bottom-color: var(--border-hi);
+    border-right-color: var(--border-hi);
+    min-height: 340px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+  }
+  .canvas-wrap .placeholder {
+    font-size: 16px;
+    color: var(--text-faint);
+    text-align: center;
+    letter-spacing: 1px;
+  }
+
+  .img-frame { position: relative; display: inline-block; line-height: 0; max-width: 100%; }
+  .img-frame img { max-width: 100%; display: block; image-rendering: auto; }
+  .img-frame canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
+
+  .loading-bar {
+    position: absolute; bottom: 0; left: 0;
+    height: 4px;
+    background: var(--amber);
+    width: 0%;
+    box-shadow: 0 0 8px var(--amber);
+    z-index: 5;
+  }
+
+  /* ---------- Metrics strip ---------- */
+  .results-strip {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 8px;
+  }
+  .metric {
+    background: var(--panel2);
+    padding: 12px 14px;
+    border-top: 2px solid var(--border-hi);
+    border-left: 2px solid var(--border-hi);
+    border-bottom: 2px solid var(--border-lo);
+    border-right: 2px solid var(--border-lo);
+  }
+  .metric .label {
+    font-size: 13px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    margin-bottom: 4px;
+  }
+  .metric .value {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 16px;
+    color: var(--text);
+  }
+  .metric .value.amber { color: var(--amber); }
+
+  /* ---------- Detections table ---------- */
+  .detections-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 15px;
+  }
+  .detections-table th {
+    text-align: left;
+    padding: 8px 10px;
+    color: var(--text-faint);
+    border-bottom: 2px solid var(--border);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: 13px;
+    font-weight: normal;
+  }
+  .detections-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #2a2a40;
+    color: var(--text);
+  }
+  .class-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    background: #12122a;
+    border: 1px solid var(--border);
+  }
+  .class-tag .sw {
+    width: 8px; height: 8px;
+  }
+  .conf-bar-wrap {
+    width: 70px; height: 6px;
+    background: #0a0a18;
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .conf-bar { height: 100%; background: var(--amber); }
+  .empty-row td {
+    text-align: center;
+    color: var(--text-faint);
+    padding: 28px;
+  }
+
+  /* scrollbar */
+  ::-webkit-scrollbar { width: 12px; }
+  ::-webkit-scrollbar-track { background: #0a0a18; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border: 2px solid #0a0a18;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-hi); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="titlebar">
+    <div class="brand">
+      <h1>SENTINEL<span>-VISION</span></h1>
+      <div class="sub">// TACTICAL INTELLIGENCE PIPELINE</div>
+    </div>
+    <div class="status-line">
+      <div class="status-item">
+        <span class="dot" id="statusDot"></span>
+        <span id="statusText">CONNEXION…</span>
+      </div>
+      <div class="status-item">MODÈLE <b id="modelInfo">—</b></div>
+      <div class="api-config">
+        API <input type="text" id="apiUrl" value="http://localhost:8000">
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <section class="panel">
+    <h2 class="panel-title">ACQUISITION</h2>
+    <label class="dropzone" id="dropzone">
+      <div class="icon">▲</div>
+      <div>GLISSER IMAGE ICI<br>OU CLiquer POUR SÉLECTIONNER</div>
+      <input type="file" id="fileInput" accept="image/*">
+    </label>
+    <button class="btn" id="analyzeBtn" disabled>LANCER L'ANALYSE</button>
+
+    <h2 class="panel-title" style="margin-top:28px;">HISTORIQUE</h2>
+    <div class="history-log" id="historyLog">
+      <div class="log-empty">AUCUNE DÉTECTION ENREGISTRÉE.</div>
+    </div>
+  </section>
+
+  <section class="panel viewer">
+    <div class="canvas-wrap" id="canvasWrap">
+      <div class="placeholder">EN ATTENTE D'IMAGE —<br>SÉLECTIONNEZ UN FICHIER</div>
+      <div class="loading-bar" id="loadingBar"></div>
+    </div>
+
+    <div class="results-strip">
+      <div class="metric">
+        <div class="label">Temps d'inférence</div>
+        <div class="value amber" id="mTime">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Objets détectés</div>
+        <div class="value" id="mCount">—</div>
+      </div>
+      <div class="metric">
+        <div class="label">Résolution</div>
+        <div class="value" id="mRes">—</div>
+      </div>
+    </div>
+
+    <div>
+      <h2 class="panel-title">DÉTECTIONS</h2>
+      <table class="detections-table">
+        <thead>
+          <tr>
+            <th>Classe</th>
+            <th>Confiance</th>
+            <th>Coordonnées (x1,y1,x2,y2)</th>
+          </tr>
+        </thead>
+        <tbody id="detectionsBody">
+          <tr class="empty-row"><td colspan="3">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+  const CIVILIAN_CLASSES = new Set(['civilian','civilian_vehicle']);
+  const COLOR_CIVILIAN = '#00e0c0';
+  const COLOR_MILITARY = '#ffb000';
+
+  function classColor(name){
+    return CIVILIAN_CLASSES.has(name) ? COLOR_CIVILIAN : COLOR_MILITARY;
+  }
+
+  const apiUrlInput   = document.getElementById('apiUrl');
+  const dropzone      = document.getElementById('dropzone');
+  const fileInput     = document.getElementById('fileInput');
+  const analyzeBtn    = document.getElementById('analyzeBtn');
+  const canvasWrap    = document.getElementById('canvasWrap');
+  const statusDot     = document.getElementById('statusDot');
+  const statusText    = document.getElementById('statusText');
+  const modelInfo     = document.getElementById('modelInfo');
+  const historyLog    = document.getElementById('historyLog');
+  const detectionsBody= document.getElementById('detectionsBody');
+
+  let selectedFile = null;
+
+  function apiBase(){ return apiUrlInput.value.replace(/\/$/, ''); }
+
+  async function checkHealth(){
+    try{
+      const res  = await fetch(apiBase() + '/health');
+      const data = await res.json();
+      if(data.model_loaded){
+        statusDot.className = 'dot online';
+        statusText.textContent = 'EN LIGNE';
+        modelInfo.textContent = `${data.model_name} v${data.model_version}`;
+      } else {
+        statusDot.className = 'dot offline';
+        statusText.textContent = 'MODÈLE NON CHARGÉ';
+        modelInfo.textContent = '—';
+      }
+    }catch(e){
+      statusDot.className = 'dot offline';
+      statusText.textContent = 'API INACCESSIBLE';
+      modelInfo.textContent = '—';
+    }
+  }
+  checkHealth();
+  setInterval(checkHealth, 10000);
+  apiUrlInput.addEventListener('change', () => { checkHealth(); loadHistory(); });
+
+  dropzone.addEventListener('click', () => fileInput.click());
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('drag'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('drag'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('drag');
+    if(e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', e => {
+    if(e.target.files.length) setFile(e.target.files[0]);
+  });
+
+  function setFile(file){
+    selectedFile = file;
+    analyzeBtn.disabled = false;
+    const url = URL.createObjectURL(file);
+    canvasWrap.innerHTML = `
+      <div class="img-frame">
+        <img id="previewImg" src="${url}">
+        <canvas id="overlay"></canvas>
+      </div>
+      <div class="loading-bar" id="loadingBar"></div>`;
+  }
+
+  analyzeBtn.addEventListener('click', async () => {
+    if(!selectedFile) return;
+    analyzeBtn.disabled = true;
+    analyzeBtn.textContent = 'ANALYSE…';
+    const bar = document.getElementById('loadingBar');
+    if(bar) bar.style.width = '60%';
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+
+    try{
+      const res = await fetch(apiBase() + '/predict', { method: 'POST', body: formData });
+      if(!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if(bar) bar.style.width = '100%';
+      renderResult(data);
+      loadHistory();
+    }catch(err){
+      alert("Échec de l'analyse : " + err.message + "\nVérifie que l'API tourne et que l'URL est correcte.");
+    }finally{
+      analyzeBtn.disabled = false;
+      analyzeBtn.textContent = "LANCER L'ANALYSE";
+    }
+  });
+
+  function renderResult(data){
+    document.getElementById('mTime').textContent  = data.inference_time_ms.toFixed(0) + ' ms';
+    document.getElementById('mCount').textContent = data.num_detections;
+    document.getElementById('mRes').textContent   = `${data.image_width}×${data.image_height}`;
+
+    const img    = document.getElementById('previewImg');
+    const canvas = document.getElementById('overlay');
+
+    function draw(){
+      canvas.width  = img.clientWidth;
+      canvas.height = img.clientHeight;
+      const scaleX = img.clientWidth  / data.image_width;
+      const scaleY = img.clientHeight / data.image_height;
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+
+      data.detections.forEach(d => {
+        const x1 = d.bbox.x1*scaleX, y1 = d.bbox.y1*scaleY;
+        const x2 = d.bbox.x2*scaleX, y2 = d.bbox.y2*scaleY;
+        const color = classColor(d.class_name);
+        const bl = Math.min(14, (x2-x1)/3);
+
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'square';
+
+        // corner brackets style "réticule"
+        [[x1,y1,1,1],[x2,y1,-1,1],[x1,y2,1,-1],[x2,y2,-1,-1]].forEach(([cx,cy,dx,dy])=>{
+          ctx.beginPath();
+          ctx.moveTo(cx, cy+bl*dy);
+          ctx.lineTo(cx, cy);
+          ctx.lineTo(cx+bl*dx, cy);
+          ctx.stroke();
+        });
+
+        ctx.font = '14px VT323, monospace';
+        const label = `${d.class_name} ${(d.confidence*100).toFixed(0)}%`;
+        const tw = ctx.measureText(label).width;
+        ctx.fillStyle = color;
+        ctx.fillRect(x1, y1-18, tw+8, 18);
+        ctx.fillStyle = '#000';
+        ctx.fillText(label, x1+4, y1-4);
+      });
+    }
+
+    if(img.complete) draw();
+    else img.onload = draw;
+    window.onresize = draw;
+
+    detectionsBody.innerHTML = '';
+    if(data.detections.length === 0){
+      detectionsBody.innerHTML = '<tr class="empty-row"><td colspan="3">AUCUN OBJET DÉTECTÉ.</td></tr>';
+    } else {
+      data.detections
+        .slice()
+        .sort((a,b)=>b.confidence-a.confidence)
+        .forEach(d => {
+          const color = classColor(d.class_name);
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td><span class="class-tag"><span class="sw" style="background:${color}"></span>${d.class_name}</span></td>
+            <td>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <div class="conf-bar-wrap"><div class="conf-bar" style="width:${(d.confidence*100).toFixed(0)}%;background:${color}"></div></div>
+                ${(d.confidence*100).toFixed(1)}%
+              </div>
+            </td>
+            <td>${d.bbox.x1.toFixed(0)}, ${d.bbox.y1.toFixed(0)}, ${d.bbox.x2.toFixed(0)}, ${d.bbox.y2.toFixed(0)}</td>`;
+          detectionsBody.appendChild(tr);
+        });
+    }
+  }
+
+  async function loadHistory(){
+    try{
+      const res  = await fetch(apiBase() + '/detections?limit=15');
+      const data = await res.json();
+      if(!data.length){
+        historyLog.innerHTML = '<div class="log-empty">AUCUNE DÉTECTION ENREGISTRÉE.</div>';
+        return;
+      }
+      historyLog.innerHTML = data.map(d => {
+        const time = new Date(d.created_at).toLocaleTimeString('fr-FR');
+        const name = d.source_filename || 'image';
+        return `<div class="log-entry">
+          <div class="row1"><span>${name}</span><span class="count">${d.num_detections}</span></div>
+          <div class="row2">${time} · ${d.inference_time_ms.toFixed(0)} ms</div>
+        </div>`;
+      }).join('');
+    }catch(e){
+      historyLog.innerHTML = '<div class="log-empty">HISTORIQUE INDISPONIBLE.</div>';
+    }
+  }
+  loadHistory();
+</script>
+</body>
+</html>
