@@ -19,7 +19,7 @@ from database import init_db, get_db_session
 from db_models import MLModel
 from logging_config import logger
 
-STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "local")   # "local" | "s3"
+STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "local")   # "local" | "s3", ici pas besoin de modifier, les variables d'environnements de configmap font l'affaire
 LOCAL_WEIGHTS_PATH = os.getenv("LOCAL_WEIGHTS_PATH", "weights/best.pt")
 S3_BUCKET = os.getenv("S3_MODEL_BUCKET", "ml-models")
 MODEL_NAME = os.getenv("MODEL_NAME", "yolo-military-detection")
