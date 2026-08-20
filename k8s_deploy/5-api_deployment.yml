@@ -1,0 +1,124 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: detection-api
+  namespace: sentinel-vision
+spec:
+  # 1 replica tant que l'inférence tourne en CPU : chaque pod recharge le modèle YOLO
+  # en RAM et se dispute le CPU pour l'inférence, donc dupliquer les pods sur CPU
+  # augmente la charge sans vraiment augmenter la capacité utile. Remonter à 2+
+  # une fois un GPU disponible dans le cluster (device plugin NVIDIA/AMD requis).
+  replicas: 1
+  selector:
+    matchLabels: { app: detection-api }
+  template:
+    metadata:
+      labels: { app: detection-api }
+    spec:
+      # Anti-affinité "souple" : Kubernetes essaie de répartir les pods sur des nœuds
+      # différents (si le cluster en a plusieurs) pour qu'une panne d'un seul nœud
+      # ne tue pas toutes les instances de l'API. "Souple" (preferred, pas required)
+      # pour ne pas bloquer le déploiement sur un cluster mono-nœud (ex: k3s en local).
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels: { app: detection-api }
+                topologyKey: kubernetes.io/hostname
+
+      # ---------- Init containers : préparent le modèle AVANT que l'API démarre ----------
+      initContainers:
+        # 1. Copie le fichier .pt (embarqué dans une image dédiée) vers un volume partagé.
+        #    Fonctionne à l'identique sur Windows (Docker Desktop) et Linux (k3s) :
+        #    aucun chemin hôte n'est référencé, tout passe par une image Docker classique.
+        - name: copy-weights
+          image: weights-loader:v2
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              echo "=== Contenu de /weights (image) ==="
+              ls -la /weights/
+              cp /weights/best.pt /shared/best.pt
+              echo "=== Contenu de /shared (volume) ==="
+              ls -la /shared/
+              echo "Poids copiés avec succès."
+          volumeMounts:
+            - name: weights-volume
+              mountPath: /shared
+
+        # 2. Enregistre le modèle en base (upload vers MinIO + insertion en base).
+        #    Idempotent : sur les redémarrages suivants, il détecte que le modèle est déjà
+        #    actif et se termine immédiatement sans rien re-uploader.
+        - name: seed-model
+          image: detection-api:local
+          imagePullPolicy: IfNotPresent
+          command: ["python", "seed_model.py"]
+          envFrom:
+            - configMapRef: { name: api-config }
+            - secretRef: { name: postgres-credentials }
+          env:
+            - name: MINIO_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: minio-credentials, key: MINIO_ROOT_USER } }
+            - name: MINIO_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: minio-credentials, key: MINIO_ROOT_PASSWORD } }
+          volumeMounts:
+            - name: weights-volume
+              mountPath: /shared
+          workingDir: /app
+
+      # ---------- Container principal ----------
+      containers:
+        - name: detection-api
+          # Remplacer par l'image poussée sur le GitLab Container Registry, ex :
+          # registry.gitlab.com/ton-groupe/sentinel-vision/api:v1.0.0
+          image: detection-api:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef: { name: api-config }
+            - secretRef: { name: postgres-credentials }   # fournit DATABASE_URL
+          env:
+            - name: MINIO_ACCESS_KEY
+              valueFrom: { secretKeyRef: { name: minio-credentials, key: MINIO_ROOT_USER } }
+            - name: MINIO_SECRET_KEY
+              valueFrom: { secretKeyRef: { name: minio-credentials, key: MINIO_ROOT_PASSWORD } }
+            - name: ALLOWED_ORIGINS
+              value: "*"   # à restreindre en prod à l'origine réelle du dashboard
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: LOG_TO_FILE
+              value: "false"   # en cluster, on logge sur stdout : kubectl logs le capte nativement
+          resources:
+            requests: { cpu: "500m", memory: "1Gi" }
+            limits: { cpu: "2", memory: "3Gi" }
+          readinessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet: { path: /health, port: 8000 }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 3
+
+      volumes:
+        - name: weights-volume
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: detection-api
+  namespace: sentinel-vision
+spec:
+  selector: { app: detection-api }
+  ports:
+    - port: 80
+      targetPort: 8000

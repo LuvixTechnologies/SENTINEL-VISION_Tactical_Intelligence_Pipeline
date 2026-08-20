@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: sentinel-vision
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: minio }
+  template:
+    metadata:
+      labels: { app: minio }
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:latest
+          args: ["server", "/data", "--console-address", ":9001"]
+          envFrom:
+            - secretRef: { name: minio-credentials }
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+          volumeMounts:
+            - name: minio-storage
+              mountPath: /data
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "2Gi" }
+          readinessProbe:
+            httpGet: { path: /minio/health/live, port: 9000 }
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: { path: /minio/health/live, port: 9000 }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+      volumes:
+        - name: minio-storage
+          persistentVolumeClaim: { claimName: minio-pvc }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: minio-pvc
+  namespace: sentinel-vision
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests: { storage: 20Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: sentinel-vision
+spec:
+  selector: { app: minio }
+  ports:
+    - name: api
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001

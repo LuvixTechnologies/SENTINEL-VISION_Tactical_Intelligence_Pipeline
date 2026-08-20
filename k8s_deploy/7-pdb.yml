@@ -1,0 +1,16 @@
+# Sans ceci, un drain de nœud ou une mise à jour du cluster pourrait arrêter
+# le pod de l'API sans garantie de continuité → coupure de service.
+# minAvailable:1 garantit qu'il en reste toujours au moins un debout.
+# Avec replicas:1 (voir 5-api_deployment.yml), ce PDB empêchera aussi tout drain
+# volontaire du nœud (kubectl drain restera bloqué) puisque évincer l'unique pod
+# ferait tomber sous le minimum garanti. Sans conséquence sur un cluster de test
+# mono-nœud ; à retirer ou passer replicas à 2+ avant un vrai multi-nœuds.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: detection-api-pdb
+  namespace: sentinel-vision
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: { app: detection-api }

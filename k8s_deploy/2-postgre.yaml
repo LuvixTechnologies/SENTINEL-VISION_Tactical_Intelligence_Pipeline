@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: sentinel-vision
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          envFrom:
+            - secretRef: { name: postgres-credentials }
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: postgres-storage
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "detection_user", "-d", "detection_db"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "detection_user", "-d", "detection_db"]
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
+  volumeClaimTemplates:
+    - metadata: { name: postgres-storage }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 5Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: sentinel-vision
+spec:
+  selector: { app: postgres }
+  ports:
+    - port: 5432
+      targetPort: 5432
+  clusterIP: None  # headless : accès direct au pod, pattern standard pour un StatefulSet

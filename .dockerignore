@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+logs/
+*.db
+models_cache/
+.git/
+.gitignore
+k8s_deploy/
+docker-compose.yml
+UI/
