@@ -1,0 +1,6 @@
+# Image "porte-modèle" : ne contient que le fichier de poids, rien d'autre.
+# Objectif : éviter un hostPath (qui a une syntaxe différente entre Windows et Linux)
+# pour faire entrer le modèle dans le cluster. Ici, le modèle voyage DANS une image
+# Docker classique, donc identique quel que soit l'OS hôte du cluster.
+FROM alpine:3.20
+COPY weights/best.pt /weights/best.pt
