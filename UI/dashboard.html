@@ -36,30 +36,7 @@
     min-height: 100vh;
     overflow-x: hidden;
   }
-
-  /* CRT scanlines + slight vignette */
-  body::before {
-    content: '';
-    position: fixed; inset: 0;
-    pointer-events: none; z-index: 100;
-    background:
-      repeating-linear-gradient(
-        0deg,
-        rgba(0,0,0,0.15) 0px,
-        rgba(0,0,0,0.15) 1px,
-        transparent 1px,
-        transparent 3px
-      );
-    opacity: 0.55;
-  }
-  body::after {
-    content: '';
-    position: fixed; inset: 0;
-    pointer-events: none; z-index: 99;
-    background: radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.45) 100%);
-  }
-
-  ::selection { background: var(--amber); color: #000; }
+  
 
   /* ---------- Classic 3D bevel helpers ---------- */
   .bevel {
