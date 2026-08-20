@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY ../requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
 
@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY --from=builder /root/.local /home/appuser/.local
-COPY . .
+COPY .. .
 
 RUN chown -R appuser:appuser /app
 
