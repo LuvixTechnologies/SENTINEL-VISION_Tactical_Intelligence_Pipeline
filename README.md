@@ -401,6 +401,16 @@ kubectl scale deployment/detection-api -n sentinel-vision --replicas=0
 
 #Remettre en route l'API :
 kubectl scale deployment/detection-api -n sentinel-vision --replicas=1
+
+# Mettre en pause / redémarrer proprement (recommandé, voir stop.sh)
+./stop.sh all
+./stop.sh start
+
+# Supprimer tout le namespace (nettoyage complet, destructif)
+./stop.sh destroy
+# ou directement :
+kubectl delete namespace sentinel-vision
+
 ```
 
 
