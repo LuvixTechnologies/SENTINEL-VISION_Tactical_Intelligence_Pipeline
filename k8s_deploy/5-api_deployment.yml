@@ -34,7 +34,7 @@ spec:
         #    Fonctionne à l'identique sur Windows (Docker Desktop) et Linux (k3s) :
         #    aucun chemin hôte n'est référencé, tout passe par une image Docker classique.
         - name: copy-weights
-          image: weights-loader:v2
+          image: weights-loader:local
           imagePullPolicy: IfNotPresent
           command:
             - sh
