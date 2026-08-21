@@ -12,7 +12,9 @@ Ce projet est une démonstration de déploiement d'IA dans un environnement DevO
 - [Architecture](#architecture)
 - [Prérequis](#prérequis)
 - [Structure du projet](#structure-du-projet)
+- [Installation initiale de k3s (Linux)](#installation-initiale-de-k3s-linux)
 - [Déploiement](#déploiement)
+- [Arrêt du service](#arrêt-du-service)
 - [Utilisation de l'API](#utilisation-de-lapi)
 - [Variables d'environnement](#variables-denvironnement)
 - [Performance du modèle](#performance-du-modèle)
@@ -101,10 +103,50 @@ Le modèle est chargé une seule fois au démarrage via deux **initContainers** 
 ├── seed_model.py               # Script d'upload MinIO + enregistrement DB
 ├── deploy.bat                  # Script de déploiement Windows (Docker Desktop)
 ├── deploy.sh                   # Script de déploiement Linux (k3s)
+├── stop.sh                     # Script d'arrêt / redémarrage / purge (Linux, k3s)
 ├── requirements.txt
 ├── .env
 └── .gitignore
 ```
+
+---
+
+## Installation initiale de k3s (Linux)
+
+Étapes à faire **une seule fois**, avant le tout premier `./deploy.sh`, sur une machine Linux qui n'a jamais eu k3s/Docker configurés.
+
+1. **Installer Docker** (utiliser le script officiel, plus fiable que les paquets de distribution) :
+   ```bash
+   curl -fsSL https://get.docker.com | sh
+   sudo usermod -aG docker "$USER"
+   ```
+   Déconnectez-vous/reconnectez-vous (ou `newgrp docker`) pour que l'appartenance au groupe `docker` prenne effet.
+
+2. **Vérifier/configurer le contexte kubectl.** Si `kubectl config current-context` renvoie `error: current-context is not set`, c'est que le kubeconfig de k3s n'a pas encore été copié à l'emplacement standard :
+   ```bash
+   sudo test -f /etc/rancher/k3s/k3s.yaml && echo "k3s.yaml trouvé"
+
+   mkdir -p ~/.kube
+   sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+   sudo chown "$(id -u):$(id -g)" ~/.kube/config
+   chmod 600 ~/.kube/config
+   ```
+
+3. **Vérifier** :
+   ```bash
+   kubectl config current-context   # doit afficher "default"
+   ```
+
+4. **Vérifier les outils requis par `deploy.sh`** :
+   ```bash
+   k3s --version
+   docker --version
+   kubectl version --client
+   openssl version
+   python3 --version
+   ```
+
+Une fois ces quatre points validés, `./deploy.sh` peut être exécuté normalement (voir [Déploiement](#déploiement)).
 
 ---
 
@@ -137,6 +179,8 @@ Puis ouvrez [http://localhost:8000/docs](http://localhost:8000/docs).
 
 ### 3. Linux (k3s)
 
+Prérequis d'installation ponctuelle : voir [Installation initiale de k3s](#installation-initiale-de-k3s-linux) si ce n'est pas déjà fait sur la machine.
+
 ```bash
 chmod +x deploy.sh
 ./deploy.sh
@@ -146,6 +190,8 @@ chmod +x deploy.sh
 ```
 
 Sur k3s, l'**Ingress** (Traefik) est appliqué automatiquement. L'API est accessible via le host défini dans `k8s_deploy/6-Ingress.yml`.
+
+> ⚠️ **`deploy.sh` génère un nouveau mot de passe Postgres/MinIO à chaque exécution** (si la génération automatique est choisie). Ne le relancez **jamais** juste pour redémarrer un déploiement existant — utilisez `./stop.sh start` à la place (voir [Arrêt du service](#arrêt-du-service)). Relancer `deploy.sh` sur un cluster déjà initialisé change le secret Kubernetes sans changer le mot de passe déjà enregistré dans le volume Postgres, et casse la connexion de l'API à la base.
 
 ### 4. Alternative : Docker Compose (`docker_deploy/`)
 
@@ -159,6 +205,38 @@ docker compose up --build
 L'API est alors accessible directement sur [http://localhost:8000/docs](http://localhost:8000/docs) (pas besoin de `port-forward`).
 
 > Cette variante est destinée au développement/débogage local. Le déploiement K8s (`k8s_deploy/`) reste la cible de référence pour la démonstration de l'orchestration et de la résilience (PDB, readiness probes, etc.).
+
+---
+
+## Arrêt du service
+
+Sur Linux/k3s, `stop.sh` gère la mise en pause, le redémarrage et la suppression complète, sans jamais toucher au script `deploy.sh` (donc sans risque de régénérer des mots de passe par erreur).
+
+```bash
+chmod +x stop.sh
+
+./stop.sh api        # met en pause uniquement l'API (Postgres/MinIO restent actifs)
+./stop.sh all         # met en pause API + Postgres + MinIO (données conservées, réplicas à 0)
+./stop.sh start        # redémarre proprement API + Postgres + MinIO dans le bon ordre
+./stop.sh destroy      # supprime tout le namespace (⚠️ destructif, confirmation requise)
+```
+
+| Commande | Effet | Données | Secrets |
+|---|---|---|---|
+| `stop.sh api` | API à 0 réplica | conservées | inchangés |
+| `stop.sh all` | Tout à 0 réplica | conservées | inchangés |
+| `stop.sh start` | Remet tout à 1 réplica, dans l'ordre (Postgres → MinIO → API) | conservées | inchangés |
+| `stop.sh destroy` | Supprime le namespace `sentinel-vision` | perdues (sauf PVC en `Retain`) | supprimés |
+
+> **Pour un simple redémarrage, utilisez toujours `./stop.sh start`, jamais `./deploy.sh`.** C'est la règle qui évite le souci de mot de passe désynchronisé décrit plus haut.
+
+Sur Windows (Docker Desktop), il n'existe pas encore d'équivalent de `stop.sh` — utilisez directement `kubectl scale` :
+
+```bat
+kubectl scale deployment/detection-api -n sentinel-vision --replicas=0
+kubectl scale deployment/minio -n sentinel-vision --replicas=0
+kubectl scale statefulset/postgres -n sentinel-vision --replicas=0
+```
 
 ---
 
@@ -272,6 +350,9 @@ Le modèle est solide sur les classes bien représentées visuellement (aéronef
 ### Secrets
 Le fichier `1-secret.yaml` contient des valeurs par défaut **non sécurisées**. Changez-les systématiquement avant tout déploiement, même en local.
 
+### Mot de passe désynchronisé après un second `deploy.sh`
+`deploy.sh` génère un **nouveau** mot de passe Postgres/MinIO à chaque exécution (mode génération auto). Le relancer sur un cluster déjà déployé met à jour le `Secret` Kubernetes mais **pas** le mot de passe déjà initialisé dans le volume Postgres existant → l'API ne peut plus se connecter à la base après redémarrage du pod. Pour un simple redémarrage, toujours utiliser `./stop.sh start` plutôt que `./deploy.sh` (voir [Arrêt du service](#arrêt-du-service)).
+
 ### Images locales
 Sur Docker Desktop, Kubernetes peut parfois garder en cache une ancienne version de l'image `:local`. Si l'initContainer `copy-weights` échoue avec `No such file or directory`, forcez un rebuild propre :
 
@@ -296,6 +377,9 @@ L'API est configurée pour tourner en **CPU** (1 replica). Dès qu'un GPU est di
 | L'API reste en `CrashLoopBackOff`                  | PostgreSQL/MinIO pas encore prêts au démarrage | Vérifier les readiness probes avec `kubectl describe pod` |
 | `port-forward` échoue avec « address already in use » | Port 8000 déjà occupé localement              | Changer le port local : `kubectl port-forward ... 8080:80` |
 | Cluster instable / pods en `Pending`                | RAM insuffisante allouée à Docker Desktop     | Augmenter la RAM allouée (Docker Desktop → Settings → Resources) |
+| `error: current-context is not set` (Linux)         | kubeconfig k3s pas encore copié dans `~/.kube` | Voir [Installation initiale de k3s](#installation-initiale-de-k3s-linux) |
+| API en `CrashLoopBackOff` après un second `./deploy.sh` | Mot de passe régénéré désynchronisé du volume Postgres | Voir [Mot de passe désynchronisé](#mot-de-passe-désynchronisé-après-un-second-deploysh) — utiliser `./stop.sh start` |
+| `sed: unknown option to 's'` pendant `./deploy.sh`  | Mot de passe généré/saisi contenant `/`, `#` ou `&` | Corrigé depuis la version courante de `deploy.sh` (échappement systématique) |
 
 ---
 
@@ -312,9 +396,13 @@ kubectl -n sentinel-vision logs -l app=detection-api -c detection-api -f
 kubectl -n sentinel-vision logs -l app=detection-api -c copy-weights
 kubectl -n sentinel-vision logs -l app=detection-api -c seed-model
 
-# Supprimer tout le namespace (nettoyage complet)
-kubectl delete namespace sentinel-vision
+# Mettre en pause l'api
+kubectl scale deployment/detection-api -n sentinel-vision --replicas=0
+
+#Remettre en route l'API :
+kubectl scale deployment/detection-api -n sentinel-vision --replicas=1
 ```
+
 
 ---
 
