@@ -1,16 +1,18 @@
-# k3s (Linux) embarque Traefik par défaut : ingressClassName: traefik fonctionne direct.
-# Docker Desktop Kubernetes (Windows) n'a PAS d'ingress controller par défaut :
-# installer ingress-nginx au préalable (voir DEPLOY.md), puis remplacer
-# ingressClassName ci-dessous par "nginx".
+# Template : les placeholders __DOMAIN__, __EMAIL__ et les blocs TLS sont
+# remplis par deploy.sh au moment du déploiement (voir questions posées au lancement).
+# k3s embarque Traefik par défaut -> ingressClassName: traefik fonctionne direct.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: detection-api-ingress
   namespace: sentinel-vision
+  annotations:
+    __CERT_MANAGER_ANNOTATION__
 spec:
-  ingressClassName: nginx   # <- changer en "nginx" sur Docker Desktop / cluster sans Traefik
+  ingressClassName: traefik
+  __TLS_BLOCK__
   rules:
-    - host: sentinel-vision.local   # à ajouter dans le fichier hosts du poste client, ou remplacer par une IP/domaine réel
+    - host: __DOMAIN__
       http:
         paths:
           - path: /
