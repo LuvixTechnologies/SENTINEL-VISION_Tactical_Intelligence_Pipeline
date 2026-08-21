@@ -27,6 +27,24 @@ kubectl config current-context
 echo
 
 # ---------------------------------------------------------------------------
+# Utilitaire : échappe une valeur pour l'insérer sans risque dans un
+# remplacement sed, quel que soit le délimiteur utilisé ("/" ou "#" ici).
+# Un mot de passe généré aléatoirement (ou saisi à la main) peut contenir
+# n'importe quel caractère spécial pour sed : "/", "#", "&", "\".
+# Sans cet échappement, un mot de passe contenant "/" casse un sed délimité
+# par "/" (c'est exactement ce qui vient de se produire), et un mot de passe
+# contenant "&" serait réinjecté tel quel comme "motif trouvé" par sed.
+# ---------------------------------------------------------------------------
+esc_sed() {
+  # $1 = valeur à échapper, $2 = caractère délimiteur utilisé par le sed cible
+  local val="$1" delim="$2"
+  val="${val//\\/\\\\}"          # échappe les backslashes en premier
+  val="${val//&/\\&}"            # échappe & (sens spécial en remplacement sed)
+  val="${val//$delim/\\$delim}"  # échappe le délimiteur lui-même
+  printf '%s' "$val"
+}
+
+# ---------------------------------------------------------------------------
 # 1. Questions de configuration
 # ---------------------------------------------------------------------------
 echo "=== Configuration du déploiement ==="
@@ -86,14 +104,21 @@ echo
 # ---------------------------------------------------------------------------
 echo "--- Génération des manifestes finaux (secrets/domaine/TLS) ---"
 
+# Versions échappées des valeurs sensibles, une par délimiteur sed utilisé.
+PG_PASSWORD_SLASH="$(esc_sed "$PG_PASSWORD" "/")"
+MINIO_PASSWORD_SLASH="$(esc_sed "$MINIO_PASSWORD" "/")"
+PG_PASSWORD_HASH="$(esc_sed "$PG_PASSWORD" "#")"
+DOMAIN_HASH="$(esc_sed "$DOMAIN" "#")"
+LETSENCRYPT_EMAIL_SLASH="$(esc_sed "$LETSENCRYPT_EMAIL" "/")"
+
 # Chaque remplacement est ancré sur le nom de sa clé pour ne toucher QUE la
 # bonne ligne (POSTGRES_PASSWORD et MINIO_ROOT_PASSWORD ont la même valeur
 # placeholder "change_this_before_deploying" dans le fichier source : un
 # remplacement global les confondrait).
-sed -e "/POSTGRES_PASSWORD:/s/change_this_before_deploying/${PG_PASSWORD}/" \
-    -e "/MINIO_ROOT_PASSWORD:/s/change_this_before_deploying/${MINIO_PASSWORD}/" \
-    -e "/MINIO_SECRET_KEY:/s/change_this_before_deploying/${MINIO_PASSWORD}/" \
-    -e "s#DATABASE_URL:.*#DATABASE_URL: postgresql://detection_user:${PG_PASSWORD}@postgres:5432/detection_db#" \
+sed -e "/POSTGRES_PASSWORD:/s/change_this_before_deploying/${PG_PASSWORD_SLASH}/" \
+    -e "/MINIO_ROOT_PASSWORD:/s/change_this_before_deploying/${MINIO_PASSWORD_SLASH}/" \
+    -e "/MINIO_SECRET_KEY:/s/change_this_before_deploying/${MINIO_PASSWORD_SLASH}/" \
+    -e "s#DATABASE_URL:.*#DATABASE_URL: postgresql://detection_user:${PG_PASSWORD_HASH}@postgres:5432/detection_db#" \
     "$K8S_DIR/1-secret.yaml" > "$RENDER_DIR/1-secret.yaml"
 
 if [[ "$ENABLE_TLS" =~ ^[Yy]$ ]]; then
@@ -104,8 +129,10 @@ else
   TLS_BLOCK="# pas de TLS"
 fi
 
-sed -e "s#__DOMAIN__#${DOMAIN}#g" \
-    -e "s#__CERT_MANAGER_ANNOTATION__#${CERT_ANNOTATION}#" \
+CERT_ANNOTATION_HASH="$(esc_sed "$CERT_ANNOTATION" "#")"
+
+sed -e "s#__DOMAIN__#${DOMAIN_HASH}#g" \
+    -e "s#__CERT_MANAGER_ANNOTATION__#${CERT_ANNOTATION_HASH}#" \
     "$K8S_DIR/6-Ingress.yml" > "$RENDER_DIR/6-Ingress.yml"
 # Insertion multi-lignes du bloc TLS via python pour éviter les soucis d'échappement sed
 python3 - "$RENDER_DIR/6-Ingress.yml" "$TLS_BLOCK" << 'PYEOF'
@@ -116,7 +143,7 @@ open(path, "w").write(content)
 PYEOF
 
 if [[ "$ENABLE_TLS" =~ ^[Yy]$ ]]; then
-  sed -e "s/__EMAIL__/${LETSENCRYPT_EMAIL}/" \
+  sed -e "s/__EMAIL__/${LETSENCRYPT_EMAIL_SLASH}/" \
       "$K8S_DIR/8-cluster_issuer.yaml" > "$RENDER_DIR/8-cluster_issuer.yaml"
 fi
 echo
